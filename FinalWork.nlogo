@@ -5,31 +5,41 @@ breed [accounts account]
 
 people-own [
   predisposition ; Predisposition to do ML
-  n-connections;
+  n-connections ; Number of connections in financial network
 ]
 
 accounts-own [
   financial-inst ; Financial institution where the account is registered.
   main ; If this account is the main account of its proprietary or not.
+  remaining-transactions;
 ]
 
 to setup
   clear-all
+  reset-ticks
   set-default-shape people "person"
   ask patches [ set pcolor blue ]
   make-people
   make-network
+  ask links [ set color black ]
+  if file-exists? "output.csv" [file-delete "output.csv"]
+  file-open "output.csv"
+  file-type "TIMESTAMP;ID_ORIGIN;ID_DESTINATION;ACC_ORIGIN;"
+  file-type "ACC_DESTINATION;FI_ORIGIN;FI_DESTINATION;VALUE\n"
+  file-flush
+  file-close
 end
 
 to make-people
   create-people n-people [
     set size 3
-    set color green
+    set color yellow
     set predisposition random-float 1
     ; Create main accounts.
     hatch-accounts 1 [
       set financial-inst random n-financial-inst
       create-link-with myself [ hide-link ]
+      set remaining-transactions []
       set main true
       hide-turtle
     ]
@@ -45,26 +55,84 @@ to make-network
   ask people [
     set n-connections ((random ( max-connections - 1 )) + 1)
     create-link-with rnd:weighted-one-of
-    other people with [ (count link-neighbors) < n-connections ]
+    other people with [ (count people-on link-neighbors) < n-connections ]
     [
       ; As the difference between the predispositions increases,
       ; the chance to be a connection decreases.
-      1.0f - ( predisposition - ([predisposition] of myself))
+      1.0f - ( predisposition - ( [ predisposition ] of myself) )
     ]
   ]
-  ; TODO perform the restant links
- ;; ask people [
- ;   let remaining-con n-connections - ( count link-neighbors )
- ;   if remaining-con > 0 and (count other people with [(count link-neighbors) < n-connections]) > 0 [
- ;     create-links-with rnd:weighted-n-of remaining-con
- ;     other people with [ (count link-neighbors) < n-connections ]
- ;     [
+  ; Perform the restant links
+  ask people [
+    let remaining-con n-connections - ( count people-on link-neighbors)
+    while [remaining-con > 0 and (count other people with [(count people-on link-neighbors) < n-connections]) > 0] [
+
+      create-link-with rnd:weighted-one-of
+      other people with [ (count people-on link-neighbors) < n-connections ]
+      [
         ; As the difference between the predispositions increases,
-;        ; the chance to be a connection decreases.
-     ;   1.0f - ( predisposition - ([predisposition] of myself))
-  ;    ]
-;    ]
- ; ]
+        ; the chance to be a connection decreases.
+        1.0f - ( predisposition - ([predisposition] of myself))
+      ]
+      set remaining-con remaining-con - 1
+    ]
+    set n-connections count people-on link-neighbors
+  ]
+end
+
+
+to go
+  let n-emissors em-per-timestamp * n-people
+  ask n-of n-emissors people [ schedule-transactions ]
+  ask links [set color black]
+  ask accounts [ perform-sched-transactions ]
+  tick
+end
+
+
+to schedule-transactions
+  ; deciding the transactions to be performed
+  let is-ml? false
+  ifelse is-ml? [
+    ;TODO
+  ]
+  [
+    ; defining a value lesser than the max permitted one
+    let value random ( max-perm-value - 0.02) + 0.01
+    let dest one-of people-on link-neighbors
+    let dest-acc [ one-of accounts-on ( accounts-on link-neighbors ) with [ main = true ]] of dest
+    let dest-bank [ financial-inst ] of dest-acc
+    let orig [ who ] of self
+    ; ask the main account to schedule transaction
+    ask one-of accounts-on (accounts-on link-neighbors) with [ main = true ] [
+      let orig-acc [ who ] of self
+      let orig-bank [ financial-inst ] of self
+      let transaction (list ticks orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value)
+      set remaining-transactions lput transaction remaining-transactions
+    ]
+  ]
+end
+
+
+to perform-sched-transactions
+  file-open "output.csv"
+  foreach remaining-transactions [ elem ->
+    let timestamp item 0 elem
+    if timestamp = ticks [
+      let con-lnk link (item 1 elem) (item 2 elem)
+      ;if con-lnk = nobody [set con-lnk link (item 3 elem) (item 2 elem)]
+      ask con-lnk [ set color green ]
+      file-type timestamp
+      foreach but-first elem [ col ->
+        file-type ";"
+        file-type col
+      ]
+    ]
+    file-type "\n"
+  ]
+  file-flush
+  file-close
+  set remaining-transactions filter [ elem -> item 0 elem > ticks ] remaining-transactions
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -120,7 +188,7 @@ n-people
 n-people
 0
 200
-61.0
+74.0
 1
 1
 NIL
@@ -142,10 +210,10 @@ NIL
 HORIZONTAL
 
 TEXTBOX
-982
-122
-1132
-197
+1087
+128
+1237
+203
 TODO ajustar essa taxa para que a quantidade de transações criminosas seja perto de 0.02
 12
 0.0
@@ -177,6 +245,53 @@ max-connections
 10
 7.0
 1
+1
+NIL
+HORIZONTAL
+
+BUTTON
+64
+168
+127
+201
+NIL
+go
+T
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
+
+SLIDER
+804
+335
+997
+368
+em-per-timestamp
+em-per-timestamp
+0
+1
+0.3
+0.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+804
+406
+1043
+439
+max-perm-value
+max-perm-value
+1.0
+10000
+5000.0
+0.01
 1
 NIL
 HORIZONTAL
