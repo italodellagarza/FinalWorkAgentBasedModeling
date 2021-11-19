@@ -25,7 +25,7 @@ to setup
   if file-exists? "output.csv" [file-delete "output.csv"]
   file-open "output.csv"
   file-type "TIMESTAMP;ID_ORIGIN;ID_DESTINATION;ACC_ORIGIN;"
-  file-type "ACC_DESTINATION;FI_ORIGIN;FI_DESTINATION;VALUE\n"
+  file-type "ACC_DESTINATION;FI_ORIGIN;FI_DESTINATION;VALUE;IS_ML\n"
   file-flush
   file-close
 end
@@ -92,9 +92,52 @@ end
 
 to schedule-transactions
   ; deciding the transactions to be performed
-  let is-ml? false
+  let is-ml? random-bernoulli predisposition
   ifelse is-ml? [
-    ;TODO
+    ; total value generation
+    let total-value 2 * (beta 5 1) * max-perm-value
+    ; transaction amounts generation
+    let next-to-max-perm? random-bernoulli 0.5
+    let values []
+    ifelse next-to-max-perm? [
+      while [ total-value > 0 ] [
+        let sd random-float (max-perm-value * 0.05) + 0.01
+        let value max-perm-value - sd
+        set values lput value values
+        set total-value total-value - value
+      ]
+    ]
+    [
+      let central random (max-perm-value / 1000) - 1
+      while [ total-value > 0 ] [
+        let sd random-float (central * 0.05) - (central * 0.025)
+        let value max-perm-value - sd
+        set values lput value values
+        set total-value total-value - value
+      ]
+    ]
+    ; destination choice
+    let dest rnd:weighted-one-of people-on link-neighbors [ predisposition ]
+
+    ; passage accounts generation (all transactions will be in the same day) TODO
+
+    ;no passage accounts case
+    let dest-acc [ one-of accounts-on ( accounts-on link-neighbors ) with [ main = true ]] of dest
+    let dest-bank [ financial-inst ] of dest-acc
+
+    let orig [ who ] of self
+
+    ; ask the main account to schedule transactions
+    ask one-of accounts-on (accounts-on link-neighbors) with [ main = true ] [
+      let n-timestamps 0
+      foreach values [ value ->
+        let orig-acc [ who ] of self
+        let orig-bank [ financial-inst ] of self
+        let transaction (list (ticks + n-timestamps) orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value 1)
+        set remaining-transactions lput transaction remaining-transactions
+      ]
+    ]
+
   ]
   [
     ; defining a value lesser than the max permitted one
@@ -107,7 +150,7 @@ to schedule-transactions
     ask one-of accounts-on (accounts-on link-neighbors) with [ main = true ] [
       let orig-acc [ who ] of self
       let orig-bank [ financial-inst ] of self
-      let transaction (list ticks orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value)
+      let transaction (list ticks orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value 0)
       set remaining-transactions lput transaction remaining-transactions
     ]
   ]
@@ -121,7 +164,7 @@ to perform-sched-transactions
     if timestamp = ticks [
       let con-lnk link (item 1 elem) (item 2 elem)
       ;if con-lnk = nobody [set con-lnk link (item 3 elem) (item 2 elem)]
-      ask con-lnk [ set color green ]
+      ask con-lnk [ set color ifelse-value (last elem = 1) [ red ] [ green ] ]
       file-type timestamp
       foreach but-first elem [ col ->
         file-type ";"
@@ -133,6 +176,18 @@ to perform-sched-transactions
   file-flush
   file-close
   set remaining-transactions filter [ elem -> item 0 elem > ticks ] remaining-transactions
+end
+
+
+
+to-report random-bernoulli [ #p ]
+  report random-float 1 < #p
+end
+
+to-report beta [ #alpha #beta ]
+  let XX random-gamma #alpha 1
+  let YY random-gamma #beta 1
+  report XX / (XX + YY)
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
