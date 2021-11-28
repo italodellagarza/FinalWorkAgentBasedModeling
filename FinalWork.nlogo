@@ -1,7 +1,22 @@
+;--------------------------------------------------
+; Random Money Laundering Dataset Generation
+; Developed by: Ítalo Della Garza Silva
+; 2021-22-11
+; Course: Agent-Based Modeling
+; Federal University of Lavras - UFLA
+;--------------------------------------------------
+
 extensions [rnd]
 
 breed [people person]
 breed [accounts account]
+
+globals [
+  n-transactions ; number of transactions until that timestamp
+  n-ilegal ; number of ilegal transactions until that timestamp
+  n-passage-tr ; number of transactions performed by passage
+               ;accounts until that timestamp
+]
 
 people-own [
   predisposition ; Predisposition to do ML
@@ -12,8 +27,13 @@ accounts-own [
   financial-inst ; Financial institution where the account is registered.
   main ; If this account is the main account of its proprietary or not.
   remaining-transactions;
+  most-recent? ; If this account is the most recently created to that user
+              ; (used to control).
 ]
 
+;--------------------------------------------------
+; MAIN CONTROL PROCEDURES
+;--------------------------------------------------
 to setup
   clear-all
   reset-ticks
@@ -28,7 +48,28 @@ to setup
   file-type "ACC_DESTINATION;FI_ORIGIN;FI_DESTINATION;VALUE;IS_ML\n"
   file-flush
   file-close
+  initialize-globals
 end
+
+
+to initialize-globals
+  set n-transactions 0
+  set n-ilegal 0
+  set n-passage-tr 0
+end
+
+
+to go
+  let n-emissors em-per-timestamp * n-people
+  ask n-of n-emissors people [ schedule-transactions ]
+  ; delete passage accounts with no more remaining transactions to perform
+  ask accounts with [ main = false and empty? remaining-transactions ] [ die ]
+  ask links [set color black]
+  ask accounts [ perform-sched-transactions ]
+  tick
+end
+
+
 
 to make-people
   create-people n-people [
@@ -36,13 +77,7 @@ to make-people
     set color yellow
     set predisposition random-float 1
     ; Create main accounts.
-    hatch-accounts 1 [
-      set financial-inst random n-financial-inst
-      create-link-with myself [ hide-link ]
-      set remaining-transactions []
-      set main true
-      hide-turtle
-    ]
+    let main-acc register-bank-account (random n-financial-inst) true
   ]
   layout-circle sort people max-pxcor - 1
 end
@@ -80,19 +115,13 @@ to make-network
   ]
 end
 
-
-to go
-  let n-emissors em-per-timestamp * n-people
-  ask n-of n-emissors people [ schedule-transactions ]
-  ask links [set color black]
-  ask accounts [ perform-sched-transactions ]
-  tick
-end
-
-
 to schedule-transactions
+  ; account choice
+  let orig-acc one-of accounts-on (accounts-on link-neighbors) with [ main = true ]
+  let orig-bank [ financial-inst ] of orig-acc
+
   ; deciding the transactions to be performed
-  let is-ml? random-bernoulli predisposition
+  let is-ml? random-bernoulli (predisposition * criminal-inf)
   ifelse is-ml? [
     ; total value generation
     let total-value 2 * (beta 5 1) * max-perm-value
@@ -118,24 +147,87 @@ to schedule-transactions
     ]
     ; destination choice
     let dest rnd:weighted-one-of people-on link-neighbors [ predisposition ]
-
-    ; passage accounts generation (all transactions will be in the same day) TODO
-
-    ;no passage accounts case
     let dest-acc [ one-of accounts-on ( accounts-on link-neighbors ) with [ main = true ]] of dest
     let dest-bank [ financial-inst ] of dest-acc
 
-    let orig [ who ] of self
 
-    ; ask the main account to schedule transactions
-    ask one-of accounts-on (accounts-on link-neighbors) with [ main = true ] [
-      let n-timestamps 0
-      foreach values [ value ->
-        let orig-acc [ who ] of self
-        let orig-bank [ financial-inst ] of self
-        let transaction (list (ticks + n-timestamps) orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value 1)
-        set remaining-transactions lput transaction remaining-transactions
+
+    ; separates the origin and the destination financial instituitions (to create
+    ; the passage accounts above).
+    let financial-insts-orig-dest []
+    let other-financial-insts []
+
+    let remaining-insts n-financial-inst - 1
+    while [ remaining-insts >= 0 ] [
+      ifelse remaining-insts = orig-bank or remaining-insts = dest-bank [
+        set financial-insts-orig-dest lput remaining-insts financial-insts-orig-dest
       ]
+      [
+        set other-financial-insts lput remaining-insts financial-insts-orig-dest
+      ]
+      set remaining-insts remaining-insts - 1
+    ]
+
+    ; passage accounts generation (all transactions will be in the same day)
+    let n-passage-acc random 3
+    let passage-accs []
+    while [ n-passage-acc > 0 ] [
+      ; Choice randomly the accont owner
+      let destiny-owner? random-bernoulli 0.5
+      ; Choice randomly (with weights) the financial institute of account
+      let same-fi? random-bernoulli (1 / n-financial-inst)
+      let f-inst ifelse-value same-fi? [ one-of financial-insts-orig-dest ] [ one-of other-financial-insts ]
+      ifelse destiny-owner? [
+        let new-p-account [register-bank-account f-inst false] of dest
+      ]
+      [
+        let new-p-account register-bank-account f-inst false
+      ]
+
+      set passage-accs lput (register-bank-account f-inst false) passage-accs
+      set n-passage-acc n-passage-acc - 1
+    ]
+
+    let pass-acc? not (empty? passage-accs)
+
+    ; ask the accounts to schedule transactions
+    let n-timestamps 0
+    foreach values [ value ->
+      ; 1 - send from the origin main account to the first passage account.
+      ask orig-acc[
+        ; get temporary destination account
+        ; (if there's no passage accounts, it will be the destination, directly).
+        let tmp-dest-acc ifelse-value pass-acc? [ first passage-accs ][ dest-acc ]
+        ;get temporary destination account owner
+        let tmp-dest one-of people-on [ link-neighbors ] of tmp-dest-acc
+        ;schedule transaction
+        account-sched-transaction (ticks + n-timestamps) tmp-dest myself tmp-dest-acc 1 value
+      ]
+
+      if pass-acc? [
+
+        ; 2 - send from one passage account to the other, following the list.
+        (foreach (but-last passage-accs) (but-first passage-accs) [ [ passage-acc-1 passage-acc-2 ] ->
+          ; get account 1 owner
+          let acc-1-owner one-of people-on [ link-neighbors ] of passage-acc-1
+
+          ; get account 2 owner
+          let acc-2-owner one-of people-on [ link-neighbors ] of passage-acc-2
+
+          ;schedule transaction
+          ask passage-acc-1 [
+            account-sched-transaction (ticks + n-timestamps) acc-2-owner acc-1-owner passage-acc-2  1 value
+          ]
+
+        ])
+        ; 3 - send from the last passage account in the list to the destination account.
+
+        ask last passage-accs [
+          let tmp-orig one-of people-on [ link-neighbors ] of self
+          account-sched-transaction (ticks + n-timestamps) dest tmp-orig dest-acc 1 value
+        ]
+      ]
+      set n-timestamps n-timestamps + 1
     ]
 
   ]
@@ -144,40 +236,76 @@ to schedule-transactions
     let value random ( max-perm-value - 0.02) + 0.01
     let dest one-of people-on link-neighbors
     let dest-acc [ one-of accounts-on ( accounts-on link-neighbors ) with [ main = true ]] of dest
-    let dest-bank [ financial-inst ] of dest-acc
-    let orig [ who ] of self
     ; ask the main account to schedule transaction
-    ask one-of accounts-on (accounts-on link-neighbors) with [ main = true ] [
-      let orig-acc [ who ] of self
-      let orig-bank [ financial-inst ] of self
-      let transaction (list ticks orig ([ who ] of dest) orig-acc ([ who ] of dest-acc) orig-bank dest-bank value 0)
-      set remaining-transactions lput transaction remaining-transactions
+    ask orig-acc [
+      account-sched-transaction ticks dest myself dest-acc 0 value
     ]
   ]
+end
+
+
+to account-sched-transaction [#timestamp #dest #orig #dest-acc #illegal #value]
+  let orig-acc-id [ who ] of self
+  let orig-fi [ financial-inst ] of self
+  let orig-id [ who ] of #orig
+  let dest-fi [ financial-inst ] of #dest-acc
+  let dest-id [ who ] of #dest
+  let dest-acc-id [ who ] of #dest-acc
+  let transaction (list #timestamp orig-id dest-id orig-acc-id dest-acc-id orig-fi dest-fi (precision #value 2) #illegal)
+  set remaining-transactions lput transaction remaining-transactions
+end
+
+to-report register-bank-account [ #f-inst #is-main? ]
+  let return 0
+  ask accounts-on link-neighbors [
+    set most-recent? false
+  ]
+
+  hatch-accounts 1 [
+    set financial-inst #f-inst
+    create-link-with myself [ hide-link ]
+    set remaining-transactions []
+    set main #is-main?
+    hide-turtle
+    set most-recent? true
+  ]
+  report one-of (accounts-on link-neighbors) with [ most-recent? = true ]
 end
 
 
 to perform-sched-transactions
   file-open "output.csv"
   foreach remaining-transactions [ elem ->
-    let timestamp item 0 elem
+    let timestamp first elem
     if timestamp = ticks [
       let con-lnk link (item 1 elem) (item 2 elem)
-      ;if con-lnk = nobody [set con-lnk link (item 3 elem) (item 2 elem)]
-      ask con-lnk [ set color ifelse-value (last elem = 1) [ red ] [ green ] ]
+      if con-lnk != nobody [ ; check if the link exists in sotial network
+                             ; (if this is not a link from the person to itself).
+        ask con-lnk [ set color ifelse-value (last elem = 1) [ red ] [ green ] ]
+      ]
       file-type timestamp
-      foreach but-first elem [ col ->
+      foreach but-last but-first elem [ col ->
         file-type ";"
         file-type col
       ]
+      file-type "\n"
+
+      if last elem = 1 [ set n-ilegal n-ilegal + 1 ]
+      if  member? (item 3 elem) ([ who ] of accounts with [ main = false ]) [
+        set n-passage-tr n-passage-tr + 1
+      ]
+      set n-transactions n-transactions + 1
     ]
-    file-type "\n"
+
   ]
   file-flush
   file-close
   set remaining-transactions filter [ elem -> item 0 elem > ticks ] remaining-transactions
 end
 
+;--------------------------------------------------
+; UTILITY PROCEDURES
+;--------------------------------------------------
 
 
 to-report random-bernoulli [ #p ]
@@ -191,9 +319,9 @@ to-report beta [ #alpha #beta ]
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-210
+166
 10
-673
+629
 474
 -1
 -1
@@ -218,10 +346,10 @@ ticks
 30.0
 
 BUTTON
-63
-94
-136
-127
+22
+71
+95
+105
 NIL
 setup
 NIL
@@ -237,7 +365,7 @@ NIL
 SLIDER
 801
 65
-973
+1014
 98
 n-people
 n-people
@@ -252,33 +380,23 @@ HORIZONTAL
 SLIDER
 802
 132
-974
+1012
 165
-avg-criminal
-avg-criminal
+criminal-inf
+criminal-inf
 0
 1
-0.5
+0.1
 0.01
 1
 NIL
 HORIZONTAL
 
-TEXTBOX
-1087
-128
-1237
-203
-TODO ajustar essa taxa para que a quantidade de transações criminosas seja perto de 0.02
-12
-0.0
-1
-
 SLIDER
-802
-210
-1018
-243
+801
+203
+1017
+236
 n-financial-inst
 n-financial-inst
 0
@@ -292,7 +410,7 @@ HORIZONTAL
 SLIDER
 803
 269
-982
+1017
 302
 max-connections
 max-connections
@@ -305,10 +423,10 @@ NIL
 HORIZONTAL
 
 BUTTON
-64
-168
-127
-201
+23
+119
+92
+152
 NIL
 go
 T
@@ -324,7 +442,7 @@ NIL
 SLIDER
 804
 335
-997
+1017
 368
 em-per-timestamp
 em-per-timestamp
@@ -339,7 +457,7 @@ HORIZONTAL
 SLIDER
 804
 406
-1043
+1022
 439
 max-perm-value
 max-perm-value
@@ -351,43 +469,210 @@ max-perm-value
 NIL
 HORIZONTAL
 
+PLOT
+1049
+14
+1532
+340
+% of Money Laundering and Passage Accounts Transactions
+Timestamp
+%
+0.0
+10.0
+0.0
+100.0
+true
+false
+"" ""
+PENS
+"Money Laundering (%)" 1.0 0 -16777216 true "" "plot ifelse-value (n-transactions = 0) [ 0 ][ n-ilegal / n-transactions * 100 ]"
+"Passage account transactions" 1.0 0 -2674135 true "" "plot ifelse-value n-transactions = 0 [ 0 ] [ n-passage-tr * 100 / n-transactions ]"
+
+MONITOR
+1061
+362
+1233
+407
+# of Transactions
+n-transactions
+0
+1
+11
+
+MONITOR
+1252
+363
+1403
+408
+# of Money Laundering
+n-ilegal
+17
+1
+11
+
+TEXTBOX
+656
+71
+806
+89
+# of people:
+13
+0.0
+1
+
+TEXTBOX
+655
+126
+805
+160
+Criminal influence factor:
+13
+0.0
+1
+
+TEXTBOX
+656
+207
+806
+241
+# of financial institutions:
+13
+0.0
+1
+
+TEXTBOX
+658
+252
+808
+303
+Maximum # of connections to each person:
+13
+0.0
+1
+
+TEXTBOX
+656
+317
+806
+368
+Proportion of emissions at each timestamp:
+13
+0.0
+1
+
+TEXTBOX
+654
+386
+804
+437
+Maximum permitted value in one transaction:
+13
+0.0
+1
+
+TEXTBOX
+762
+17
+912
+36
+Control Variables
+16
+0.0
+1
+
+TEXTBOX
+17
+27
+167
+46
+Main Controls
+16
+0.0
+1
+
 @#$#@#$#@
 # Money Laundering Dataset Generator
 ## WHAT IS IT?
 
-This model attempts to simulate a financial transactions dataset generation, with the presence of money laundering operations. In this model, the agents are people who have a bank account and eventually performs money laundering transactions. The model generates a file with the transactions at the end of this execution.
+This model attempts to simulate a financial transactions dataset generation, with the presence of money laundering operations. In this model, the agents are people who have a bank account and eventually performs money laundering transactions. The model generates a file with the transactions (with and without ml) at the end of this execution. Concerning the Money Laundering transactions, this model tries to cover the following techniques generally performed by criminals:
+
+- __Smurfing__: The repeated transaction sets have a standard deviation attached, which covers it's identification.
+
+- __Passage Accounts__: Accounts used only to transfer the amount to another one, to prevent the finding of money source at the investigation.
+
+- __Transaction Values Rounding__: The repeated transactions generally are rounded to a value divisible by 1,000.
 
 ## HOW IT WORKS
 
 (what rules the agents use to create the overall behavior of the model)
+The model has two types of agents:
+
+- __Person__: The agent who will open the accounts and take the decisions. It owns a predisposition value to realize money laundering (between 0 and 1) and the  number of connections in the social network, used during its initialization.
+
+- __Account__: The account used by a person to perform the financial transactions. The accounts are associated to a financial institute. They have a variable to list the remaining scheduled transactions to perform and two boolean variables to indicate if it was the opened by the owner and if it is the main owner's account or just a passage account.
+
+People in this model are arranged in a communication network through which they will decide to whom the amount will be transfered at that moment. 
+
+### SETUP
+
+In the setup, a number of people (setable trough the variable `n-people`) is created in the environment, with a random predisposition value. Then, the social network is constructed, according to the following constraints:
+
+- Each person will have a number of connections smaller than a global maximum number value (and this value is setable through the variable `max-connections`). 
+- Each person will have at least one connection. To attend this constraint, a unique connection is created initially to each person before the creation of the other links to attenf the person's number of connections.
+- People with similar predisposition are more likely connected. To attend this constraint, each other person will have a weight associated at the moment of the choice to be the one person connection, which is obtained from the difference between two person's predisposition minus 1, that is, smaller differences generates a bigger weight.
+
+### EXECUTION
+
+At each step of the execution, a proportion (setable trough the variable `em-per-timestamp`) will schedule a transaction. To each person, it is asked to perform a transaction, which will be a money laundering operation or not according to a Bernoulli Distribution with the probability determined by the product of the person's predisposition and a criminal influence factor (configurable through the variable `criminal-inf`). Each of this situations have their own particularities:
+
+- If the transaction is money laundering:
+	- The most likely destination are the ones with biggest predisposition (also choiced trough weights).
+	- The amount have a biggest probability to be higher than the maximum permitted value. Various successive transactions are scheduled to cover the total.
+	- A layer scheme with passage accounts can be constructed or not (with 50% probability) and they are randonly owned by the destination person or the sender.
+	- The financial institution of the passage accounts are most likely diferent of the origin account's one.
+	- Each scheduled transaction's amount value has it's average next to a value divisible by 1,000 with a small random deviation (positive or negative), or a little smaller than the maximum permitted with a small negative deviation.
+
+The program generates the file `output.csv`. which has the register of each transaction described by the following variables:
+
+- __`TIMESTAMP`__: The transaction timestamp.
+- __`ID_ORIGIN`__: The `who` variable of the origin.
+- __`ID_DESTINATION`__: The `who` variable of the destination. 
+- __`ACC_ORIGIN`__: The `who` variable of the origin's account.
+- __`ACC_DESTINATION`__: The `who` variable of the destination's account.
+- __`FI_ORIGIN`__: The financial institution number of the origin.
+- __`FI_DESTINATION`__: The financial institution number of the destination.
+- __`VALUE`__: The transaction value.
+- __`IS_ML`__: If is a money laundering (1) or not (0).
+
+
 
 ## HOW TO USE IT
 
-(how to use the model, including a description of each of the items in the Interface tab)
+You can initialize the model by "setup" button and execute it by the "go" button. There are many sliders to control other variables in the model:
 
-## THINGS TO NOTICE
+- `n-people`: Determines the number of people created in the setup.
+- `criminal-inf`: Determines the factor of criminal influence in the model. Higher values will result in most Money Laundering transactions.
+- `n-financial-inst`: The number of financial institutions in the model.
+- `max-connections`: The maximum number of connections to each person in the social network.
+- `em-per-timestamp`: The proportion of the people who will perform emissions at each timestamp.
+- `max-perm-value`: The maximum permitted transaction value.
 
-(suggested things for the user to notice while running the model)
+It is possible to see the proportion of Money Launderig and passage accounts transactions at each timestamp through a line graph, as the numeric number of total transactions and money laundering transactions. In the environment world window, it is possible to see the people's social network, and the transactions being performed between them at each timestep. When the link becomes green, there is a normal transaction between the two persons linked. When the link becomes red, it's a Money Laundering transaction.
 
-## THINGS TO TRY
+At each time when the model setups, a new "output.csv" file is created containing only the reader with the column names. During the execution, the transactions performed are registered in the last line of this file, building the dataset. 
 
-(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
-
-## EXTENDING THE MODEL
-
-(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
 
 ## NETLOGO FEATURES
 
-(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
+This model makes use of the `rnd` extention to generate some random variables.
 
-## RELATED MODELS
-
-(models in the NetLogo Models Library and elsewhere which are of related interest)
 
 ## CREDITS AND REFERENCES
 
-(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)
+This model was inspired by the following works:
+
+- https://ccl.northwestern.edu/2005/Generating_Fraud_Agent_Based_Financial_N.pdf
+- https://github.com/EdgarLopezPhD/PaySim
 @#$#@#$#@
 default
 true
