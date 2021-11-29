@@ -69,7 +69,9 @@ to go
   tick
 end
 
-
+;--------------------------------------------------
+; IMPLEMENTATION PROCEDURES
+;--------------------------------------------------
 
 to make-people
   create-people n-people [
@@ -89,12 +91,15 @@ to make-network
   ;creates one initial connection to each agent
   ask people [
     set n-connections ((random ( max-connections - 1 )) + 1)
-    create-link-with rnd:weighted-one-of
-    other people with [ (count people-on link-neighbors) < n-connections ]
-    [
-      ; As the difference between the predispositions increases,
-      ; the chance to be a connection decreases.
-      1.0f - ( predisposition - ( [ predisposition ] of myself) )
+    if (count other people with [(count people-on link-neighbors) < n-connections] > 0) [
+      create-link-with rnd:weighted-one-of
+
+      other people with [ (count people-on link-neighbors) < n-connections ]
+      [
+        ; As the difference between the predispositions increases,
+        ; the chance to be a connection decreases.
+        1.0f - ( predisposition - ( [ predisposition ] of myself) )
+      ]
     ]
   ]
   ; Perform the restant links
@@ -284,7 +289,7 @@ to perform-sched-transactions
         ask con-lnk [ set color ifelse-value (last elem = 1) [ red ] [ green ] ]
       ]
       file-type timestamp
-      foreach but-last but-first elem [ col ->
+      foreach but-first elem [ col ->
         file-type ";"
         file-type col
       ]
@@ -371,7 +376,7 @@ n-people
 n-people
 0
 200
-74.0
+50.0
 1
 1
 NIL
@@ -386,7 +391,7 @@ criminal-inf
 criminal-inf
 0
 1
-0.1
+0.76
 0.01
 1
 NIL
@@ -401,7 +406,7 @@ n-financial-inst
 n-financial-inst
 0
 100
-52.0
+50.0
 1
 1
 NIL
@@ -416,7 +421,7 @@ max-connections
 max-connections
 0
 10
-7.0
+5.0
 1
 1
 NIL
@@ -448,7 +453,7 @@ em-per-timestamp
 em-per-timestamp
 0
 1
-0.3
+0.6
 0.01
 1
 NIL
@@ -463,7 +468,7 @@ max-perm-value
 max-perm-value
 1.0
 10000
-5000.0
+10000.0
 0.01
 1
 NIL
@@ -482,7 +487,7 @@ Timestamp
 0.0
 100.0
 true
-false
+true
 "" ""
 PENS
 "Money Laundering (%)" 1.0 0 -16777216 true "" "plot ifelse-value (n-transactions = 0) [ 0 ][ n-ilegal / n-transactions * 100 ]"
@@ -604,14 +609,14 @@ This model attempts to simulate a financial transactions dataset generation, wit
 
 ## HOW IT WORKS
 
-(what rules the agents use to create the overall behavior of the model)
 The model has two types of agents:
 
-- __Person__: The agent who will open the accounts and take the decisions. It owns a predisposition value to realize money laundering (between 0 and 1) and the  number of connections in the social network, used during its initialization.
+- __Person__: The agent who will open the accounts and take the decisions. It owns a predisposition value to realize money laundering (between 0 and 1) and the number of connections in the social network, used during its initialization.
 
-- __Account__: The account used by a person to perform the financial transactions. The accounts are associated to a financial institute. They have a variable to list the remaining scheduled transactions to perform and two boolean variables to indicate if it was the opened by the owner and if it is the main owner's account or just a passage account.
+- __Account__: The account used by a person to perform the financial transactions. The accounts are associated to a financial institute identifier. They have a variable to list the remaining scheduled transactions to perform and two boolean variables to indicate if it was the last opened by the owner and if it is the main owner's account or just a passage account.
 
-People in this model are arranged in a communication network through which they will decide to whom the amount will be transfered at that moment. 
+People are arranged in a communication network, structured as an undirected graph. They select the destination of their transaction considering only their links in the network.
+
 
 ### SETUP
 
@@ -623,16 +628,18 @@ In the setup, a number of people (setable trough the variable `n-people`) is cre
 
 ### EXECUTION
 
-At each step of the execution, a proportion (setable trough the variable `em-per-timestamp`) will schedule a transaction. To each person, it is asked to perform a transaction, which will be a money laundering operation or not according to a Bernoulli Distribution with the probability determined by the product of the person's predisposition and a criminal influence factor (configurable through the variable `criminal-inf`). Each of this situations have their own particularities:
-
-- If the transaction is money laundering:
-	- The most likely destination are the ones with biggest predisposition (also choiced trough weights).
-	- The amount have a biggest probability to be higher than the maximum permitted value. Various successive transactions are scheduled to cover the total.
-	- A layer scheme with passage accounts can be constructed or not (with 50% probability) and they are randonly owned by the destination person or the sender.
-	- The financial institution of the passage accounts are most likely diferent of the origin account's one.
+At each step of the execution, a proportion of people will schedule a transaction. To each person, it is asked to perform a transaction, which will be a money laundering operation or not according to a Bernoulli Distribution with the probability determined by the product of the person's predisposition and a criminal influence factor. Each of these situations have their own particularities:
+- If the transaction is Money Laundering: 
+	- The most likely destination are the ones with biggest predisposition (also chosen trough weights).
+	- The amount has a biggest probability to be higher than the maximum permitted value. Various successive transactions are scheduled to cover the total.
+	- A layer scheme with passage accounts can be constructed or not (with 50% probability) and they are randomly owned by the destination person or the sender.
+	- The financial institution of the passage accounts is most likely different of the origin account's one.
 	- Each scheduled transaction's amount value has it's average next to a value divisible by 1,000 with a small random deviation (positive or negative), or a little smaller than the maximum permitted with a small negative deviation.
+- If the transaction is not a Money Laundering:
+	- The amount will be lesser than the maximum permitted value.
+	- The transaction will be done within a single timestep.
 
-The program generates the file `output.csv`. which has the register of each transaction described by the following variables:
+After scheduling, at the same timestep, each account is verified in order to perform their scheduled transactions to that timestep. The transactions are recorded in an output file (`output.csv`) which has the register of each transaction described by the following variables:
 
 - __`TIMESTAMP`__: The transaction timestamp.
 - __`ID_ORIGIN`__: The `who` variable of the origin.
@@ -983,6 +990,40 @@ NetLogo 6.2.0
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
+<experiments>
+  <experiment name="experiment" repetitions="20" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <timeLimit steps="500"/>
+    <metric>ifelse-value (n-transactions = 0) [ 0 ][ n-ilegal / n-transactions * 100 ]</metric>
+    <metric>ifelse-value n-transactions = 0 [ 0 ] [ n-passage-tr * 100 / n-transactions ]</metric>
+    <metric>n-transactions</metric>
+    <enumeratedValueSet variable="n-people">
+      <value value="50"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="criminal-inf">
+      <value value="0.1"/>
+      <value value="0.25"/>
+      <value value="0.5"/>
+      <value value="1"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="n-financial-inst">
+      <value value="50"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="max-connections">
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="em-per-timestamp">
+      <value value="0.3"/>
+      <value value="0.6"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="max-perm-value">
+      <value value="2000"/>
+      <value value="5000"/>
+      <value value="10000"/>
+    </enumeratedValueSet>
+  </experiment>
+</experiments>
 @#$#@#$#@
 @#$#@#$#@
 default

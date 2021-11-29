@@ -1,8 +1,5 @@
 # Money Laundering Dataset Generator
 
-This is the final work of the Agend Based Model course at Federal University of Lavras - UFLA.
-
-[![Netlogo Version](https://img.shields.io/badge/Netlogo-6.2-green)](https://ccl.northwestern.edu/netlogo/download.shtml)
 ## WHAT IS IT?
 
 This model attempts to simulate a financial transactions dataset generation, with the presence of money laundering operations. In this model, the agents are people who have a bank account and eventually performs money laundering transactions. The model generates a file with the transactions (with and without ml) at the end of this execution. Concerning the Money Laundering transactions, this model tries to cover the following techniques generally performed by criminals:
@@ -15,14 +12,14 @@ This model attempts to simulate a financial transactions dataset generation, wit
 
 ## HOW IT WORKS
 
-(what rules the agents use to create the overall behavior of the model)
 The model has two types of agents:
 
-- __Person__: The agent who will open the accounts and take the decisions. It owns a predisposition value to realize money laundering (between 0 and 1) and the  number of connections in the social network, used during its initialization.
+- __Person__: The agent who will open the accounts and take the decisions. It owns a predisposition value to realize money laundering (between 0 and 1) and the number of connections in the social network, used during its initialization.
 
-- __Account__: The account used by a person to perform the financial transactions. The accounts are associated to a financial institute. They have a variable to list the remaining scheduled transactions to perform and two boolean variables to indicate if it was the opened by the owner and if it is the main owner's account or just a passage account.
+- __Account__: The account used by a person to perform the financial transactions. The accounts are associated to a financial institute identifier. They have a variable to list the remaining scheduled transactions to perform and two boolean variables to indicate if it was the last opened by the owner and if it is the main owner's account or just a passage account.
 
-People in this model are arranged in a communication network through which they will decide to whom the amount will be transfered at that moment. 
+People are arranged in a communication network, structured as an undirected graph. They select the destination of their transaction considering only their links in the network.
+
 
 ### SETUP
 
@@ -34,16 +31,18 @@ In the setup, a number of people (setable trough the variable `n-people`) is cre
 
 ### EXECUTION
 
-At each step of the execution, a proportion (setable trough the variable `em-per-timestamp`) will schedule a transaction. To each person, it is asked to perform a transaction, which will be a money laundering operation or not according to a Bernoulli Distribution with the probability determined by the product of the person's predisposition and a criminal influence factor (configurable through the variable `criminal-inf`). Each of this situations have their own particularities:
-
-- If the transaction is money laundering:
-	- The most likely destination are the ones with biggest predisposition (also choiced trough weights).
-	- The amount have a biggest probability to be higher than the maximum permitted value. Various successive transactions are scheduled to cover the total.
-	- A layer scheme with passage accounts can be constructed or not (with 50% probability) and they are randonly owned by the destination person or the sender.
-	- The financial institution of the passage accounts are most likely diferent of the origin account's one.
+At each step of the execution, a proportion of people will schedule a transaction. To each person, it is asked to perform a transaction, which will be a money laundering operation or not according to a Bernoulli Distribution with the probability determined by the product of the person's predisposition and a criminal influence factor. Each of these situations have their own particularities:
+- If the transaction is Money Laundering: 
+	- The most likely destination are the ones with biggest predisposition (also chosen trough weights).
+	- The amount has a biggest probability to be higher than the maximum permitted value. Various successive transactions are scheduled to cover the total.
+	- A layer scheme with passage accounts can be constructed or not (with 50% probability) and they are randomly owned by the destination person or the sender.
+	- The financial institution of the passage accounts is most likely different of the origin account's one.
 	- Each scheduled transaction's amount value has it's average next to a value divisible by 1,000 with a small random deviation (positive or negative), or a little smaller than the maximum permitted with a small negative deviation.
+- If the transaction is not a Money Laundering:
+	- The amount will be lesser than the maximum permitted value.
+	- The transaction will be done within a single timestep.
 
-The program generates the file `output.csv`. which has the register of each transaction described by the following variables:
+After scheduling, at the same timestep, each account is verified in order to perform their scheduled transactions to that timestep. The transactions are recorded in an output file (`output.csv`) which has the register of each transaction described by the following variables:
 
 - __`TIMESTAMP`__: The transaction timestamp.
 - __`ID_ORIGIN`__: The `who` variable of the origin.
